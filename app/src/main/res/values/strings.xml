@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Ax Claude</string>
+    <string name="process_text_label">Ax Claude</string>
+    <string name="service_label">Ax Claude page reader</string>
+    <string name="service_description">Lets Ax Claude read the web address and find the images shown on screen in Firefox, Chrome and Samsung Internet when you tap Ax Claude on selected text. Nothing is stored or sent anywhere except to Claude when you tap Send.</string>
+</resources>

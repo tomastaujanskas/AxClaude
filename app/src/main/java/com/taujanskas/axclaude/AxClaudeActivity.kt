@@ -1,0 +1,142 @@
+package com.taujanskas.axclaude
+
+import android.app.Activity
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.os.Bundle
+import android.view.View
+import android.widget.Button
+import android.widget.EditText
+import android.widget.TextView
+import android.widget.Toast
+
+/**
+ * Opens when you tap "Ax Claude" in the text-selection menu. Shows what will be sent,
+ * lets you add an optional question, then shares everything to the Claude app as one text.
+ */
+class AxClaudeActivity : Activity() {
+
+    private var selected: String = ""
+    private var snapshot: PageSnapshot? = null
+    @Volatile private var imageResult: ImageResolver.Result? = null
+    @Volatile private var imagesDone = false
+
+    private lateinit var imagesText: TextView
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_ax)
+
+        selected = intent.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT)?.toString()?.trim().orEmpty()
+        snapshot = SnapshotStore.fresh()
+
+        val selectedText = findViewById<TextView>(R.id.selectedText)
+        val pageText = findViewById<TextView>(R.id.pageText)
+        imagesText = findViewById(R.id.imagesText)
+        val question = findViewById<EditText>(R.id.question)
+
+        selectedText.text = if (selected.isNotEmpty()) "“$selected”" else "(No text selected)"
+
+        val url = snapshot?.url
+        if (url != null) {
+            pageText.text = "🔗 $url"
+        } else if (!isServiceEnabled()) {
+            pageText.text = "🔗 Web address unavailable: tap here to turn on Ax Claude's page reader"
+            pageText.setOnClickListener { startActivity(Intent(this, MainActivity::class.java)) }
+        } else {
+            pageText.text = "🔗 Couldn't read the web address"
+        }
+
+        startImageLookup()
+
+        findViewById<Button>(R.id.cancel).setOnClickListener { finish() }
+        findViewById<Button>(R.id.send).setOnClickListener {
+            sendToClaude(question.text?.toString()?.trim().orEmpty())
+        }
+    }
+
+    private fun startImageLookup() {
+        val snap = snapshot
+        val visible = snap?.images.orEmpty()
+        if (snap == null || visible.isEmpty()) {
+            imagesDone = true
+            imagesText.text = if (snap == null) "" else "🖼 No images on screen"
+            imagesText.visibility = if (snap == null) View.GONE else View.VISIBLE
+            return
+        }
+        val url = snap.url
+        if (url == null) {
+            imageResult = ImageResolver.Result(visible.map { it to null })
+            imagesDone = true
+            showImageSummary()
+            return
+        }
+        imagesText.text = "🖼 ${visible.size} image(s) on screen: finding their addresses…"
+        Thread {
+            val result = ImageResolver.resolve(url, visible)
+            imageResult = result
+            imagesDone = true
+            runOnUiThread { if (!isFinishing) showImageSummary() }
+        }.start()
+    }
+
+    private fun showImageSummary() {
+        val r = imageResult ?: return
+        val withUrl = r.matched.count { it.second != null }
+        imagesText.text = "🖼 ${r.matched.size} image(s) on screen, $withUrl with web address"
+    }
+
+    private fun buildText(question: String): String {
+        val sb = StringBuilder()
+        if (question.isNotEmpty()) {
+            sb.append(question).append("\n\n---\n")
+        }
+        snapshot?.url?.let { sb.append("Page: ").append(it).append("\n") }
+
+        if (selected.isNotEmpty()) {
+            sb.append("\nSelected text:\n\"\"\"\n").append(selected).append("\n\"\"\"\n")
+        }
+
+        val r = imageResult
+        if (r != null && r.matched.isNotEmpty()) {
+            sb.append("\nImages visible on screen:\n")
+            r.matched.forEach { (img, page) ->
+                val alt = img.description.ifEmpty { page?.alt.orEmpty() }
+                val line = when {
+                    page != null && alt.isNotEmpty() -> "- ${page.url} (\"$alt\")"
+                    page != null -> "- ${page.url}"
+                    alt.isNotEmpty() -> "- \"$alt\" (address not found)"
+                    else -> "- (unlabelled image, address not found)"
+                }
+                sb.append(line).append("\n")
+            }
+        } else if (!imagesDone) {
+            sb.append("\n(Images on screen: lookup still running when sent)\n")
+        }
+        return sb.toString().trim()
+    }
+
+    private fun sendToClaude(question: String) {
+        val text = buildText(question)
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, text)
+            setPackage(CLAUDE_PACKAGE)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        try {
+            startActivity(send)
+        } catch (e: ActivityNotFoundException) {
+            Toast.makeText(this, "Claude app not found. Pick an app to share with", Toast.LENGTH_SHORT).show()
+            send.setPackage(null)
+            startActivity(Intent.createChooser(send, "Share with").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }
+        finish()
+    }
+
+    private fun isServiceEnabled(): Boolean = MainActivity.isServiceEnabled(this)
+
+    companion object {
+        const val CLAUDE_PACKAGE = "com.anthropic.claude"
+    }
+}
