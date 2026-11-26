@@ -109,9 +109,17 @@ class AxClaudeActivity : Activity() {
             readClipboardPending = false
             val cm = getSystemService(ClipboardManager::class.java)
             val clip = cm.primaryClip
-            val text = if (clip != null && clip.itemCount > 0)
+            // Ignore anything copied before the bubble was tapped (stale clipboard).
+            val tapTime = intent.getLongExtra(EXTRA_TAP_TIME, 0L)
+            val clipTime = cm.primaryClipDescription?.timestamp ?: 0L
+            val fresh = tapTime == 0L || clipTime >= tapTime - 1500
+            val text = if (fresh && clip != null && clip.itemCount > 0)
                 clip.getItemAt(0).coerceToText(this)?.toString()?.trim().orEmpty() else ""
             if (text.isNotEmpty()) selected = text
+            else if (selected.isEmpty()) {
+                selectedView.text = "(Couldn't read the selected text: long-press the title and send me the debug info)"
+                return
+            }
             showSelected()
         }
     }
@@ -240,5 +248,6 @@ class AxClaudeActivity : Activity() {
         const val CLAUDE_PACKAGE = "com.anthropic.claude"
         const val EXTRA_READ_CLIPBOARD = "com.taujanskas.axclaude.READ_CLIPBOARD"
         const val EXTRA_SCREENSHOT = "com.taujanskas.axclaude.SCREENSHOT"
+        const val EXTRA_TAP_TIME = "com.taujanskas.axclaude.TAP_TIME"
     }
 }

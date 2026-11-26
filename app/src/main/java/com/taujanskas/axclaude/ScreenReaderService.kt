@@ -1,6 +1,8 @@
 package com.taujanskas.axclaude
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.GestureDescription
+import android.graphics.Path
 import android.content.Intent
 import android.graphics.Bitmap
 import android.view.Display
@@ -83,6 +85,31 @@ class ScreenReaderService : AccessibilityService() {
                 eventSelectionAt = System.currentTimeMillis()
             }
         } catch (e: Exception) {
+        }
+    }
+
+    /** Taps Copy like a finger would; falls back to an accessibility click. */
+    private fun pressCopy(node: AccessibilityNodeInfo): Boolean {
+        try {
+            node.refresh()
+            val r = Rect()
+            node.getBoundsInScreen(r)
+            if (!r.isEmpty) {
+                val path = Path().apply { moveTo(r.exactCenterX(), r.exactCenterY()) }
+                val gesture = GestureDescription.Builder()
+                    .addStroke(GestureDescription.StrokeDescription(path, 0, 60))
+                    .build()
+                if (dispatchGesture(gesture, null, null)) return true
+            }
+        } catch (e: Exception) {
+        }
+        // Fallback: click the nearest clickable ancestor.
+        return try {
+            var n: AccessibilityNodeInfo? = node
+            while (n != null && !n.isClickable) n = n.parent
+            (n ?: node).performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        } catch (e: Exception) {
+            false
         }
     }
 
@@ -190,12 +217,9 @@ class ScreenReaderService : AccessibilityService() {
         val fromEvent = eventSelection
             ?.takeIf { System.currentTimeMillis() - eventSelectionAt < 60_000 }
             .orEmpty()
-        // Click the browser's own Copy so the exact selection lands on the clipboard.
-        val copied = try {
-            copyNode?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
-        } catch (e: Exception) {
-            false
-        }
+        val tapTime = System.currentTimeMillis()
+        // Press the browser's own Copy so the exact selection lands on the clipboard.
+        val copied = copyNode?.let { pressCopy(it) } ?: false
         copyNode = null
 
         // Let the menu and bubble disappear, then take the screenshot, then open the popup.
@@ -205,11 +229,12 @@ class ScreenReaderService : AccessibilityService() {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     if (fromEvent.isNotEmpty()) putExtra(Intent.EXTRA_PROCESS_TEXT, fromEvent)
                     putExtra(AxClaudeActivity.EXTRA_READ_CLIPBOARD, copied)
+                    putExtra(AxClaudeActivity.EXTRA_TAP_TIME, tapTime)
                     if (file != null) putExtra(AxClaudeActivity.EXTRA_SCREENSHOT, file.absolutePath)
                 }
                 startActivity(intent)
             }
-        }, 350L)
+        }, 450L)
     }
 
     private data class Item(val node: AccessibilityNodeInfo, val inWeb: Boolean)

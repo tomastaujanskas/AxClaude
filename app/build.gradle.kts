@@ -11,8 +11,8 @@ android {
         applicationId = "com.taujanskas.axclaude"
         minSdk = 29
         targetSdk = 35
-        versionCode = 4
-        versionName = "1.3"
+        versionCode = 5
+        versionName = "1.4"
     }
 
     // One fixed key so every build can install over the previous one.
