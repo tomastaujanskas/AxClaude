@@ -190,6 +190,19 @@ class AxClaudeActivity : Activity() {
         val shot = shotFile?.takeIf { includeShot.isChecked && it.exists() }
         if (shot == null) shotFile?.delete()
 
+        if (shot != null) {
+            // In case Claude only picks up the image, keep the text on the clipboard too.
+            getSystemService(ClipboardManager::class.java)
+                .setPrimaryClip(ClipData.newPlainText("Ax Claude", text))
+        }
+
+        // Claude drops shared text when an image comes with it, so with a screenshot we send
+        // the text as an attached .txt file next to the image.
+        if (shot != null && sendImageAndTextFile(shot, text)) {
+            finish()
+            return
+        }
+
         val send = Intent(Intent.ACTION_SEND).apply {
             putExtra(Intent.EXTRA_TEXT, text)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -197,19 +210,15 @@ class AxClaudeActivity : Activity() {
                 val uri = FileProvider.getUriForFile(this@AxClaudeActivity, "$packageName.files", shot)
                 type = if (shot.name.endsWith(".jpg")) "image/jpeg" else "image/png"
                 putExtra(Intent.EXTRA_STREAM, uri)
-                clipData = android.content.ClipData.newRawUri("Screenshot", uri)
+                clipData = ClipData.newRawUri("Screenshot", uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             } else {
                 type = "text/plain"
             }
             setPackage(CLAUDE_PACKAGE)
         }
-
         if (shot != null) {
-            // In case Claude only picks up the image, keep the text on the clipboard too.
-            getSystemService(ClipboardManager::class.java)
-                .setPrimaryClip(ClipData.newPlainText("Ax Claude", text))
-            Toast.makeText(this, "Text also copied: paste it if it's missing", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Text copied: paste it into Claude", Toast.LENGTH_LONG).show()
         }
 
         try {
@@ -220,6 +229,31 @@ class AxClaudeActivity : Activity() {
             startActivity(Intent.createChooser(send, "Share with").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         }
         finish()
+    }
+
+    /** Shares the screenshot plus a .txt file with the text. Returns false if Claude won't take it. */
+    private fun sendImageAndTextFile(shot: File, text: String): Boolean {
+        return try {
+            val txt = File(Screenshots.dir(this), "ax-claude-${System.currentTimeMillis()}.txt")
+            txt.writeText(text)
+            val auth = "$packageName.files"
+            val shotUri = FileProvider.getUriForFile(this, auth, shot)
+            val txtUri = FileProvider.getUriForFile(this, auth, txt)
+            val send = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+                type = "*/*"
+                putParcelableArrayListExtra(Intent.EXTRA_STREAM, arrayListOf(shotUri, txtUri))
+                putExtra(Intent.EXTRA_TEXT, text)
+                clipData = ClipData.newRawUri("Screenshot", shotUri).apply {
+                    addItem(ClipData.Item(txtUri))
+                }
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                setPackage(CLAUDE_PACKAGE)
+            }
+            startActivity(send)
+            true
+        } catch (e: Exception) {
+            false
+        }
     }
 
     private fun copyDebugInfo() {
