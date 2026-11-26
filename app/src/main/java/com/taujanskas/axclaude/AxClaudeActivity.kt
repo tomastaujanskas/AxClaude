@@ -2,6 +2,8 @@ package com.taujanskas.axclaude
 
 import android.app.Activity
 import android.content.ActivityNotFoundException
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.os.Bundle
 import android.view.View
@@ -49,6 +51,12 @@ class AxClaudeActivity : Activity() {
 
         startImageLookup()
 
+        // Hidden troubleshooting: long-press the title to copy what the app saw.
+        findViewById<TextView>(R.id.title).setOnLongClickListener {
+            copyDebugInfo()
+            true
+        }
+
         findViewById<Button>(R.id.cancel).setOnClickListener { finish() }
         findViewById<Button>(R.id.send).setOnClickListener {
             sendToClaude(question.text?.toString()?.trim().orEmpty())
@@ -66,7 +74,7 @@ class AxClaudeActivity : Activity() {
         }
         val url = snap.url
         if (url == null) {
-            imageResult = ImageResolver.Result(visible.map { it to null })
+            imageResult = ImageResolver.Result(visible.map { it to null }, "no URL, so no page fetch")
             imagesDone = true
             showImageSummary()
             return
@@ -132,6 +140,26 @@ class AxClaudeActivity : Activity() {
             startActivity(Intent.createChooser(send, "Share with").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         }
         finish()
+    }
+
+    private fun copyDebugInfo() {
+        val snap = SnapshotStore.latest
+        val info = buildString {
+            append("Ax Claude debug\n")
+            append("service on: ").append(isServiceEnabled()).append('\n')
+            if (snap == null) {
+                append("no snapshot yet\n")
+            } else {
+                val age = (System.currentTimeMillis() - snap.takenAt) / 1000
+                append("snapshot age: ${age}s, url: ${snap.url}, from: ${snap.urlSource}\n")
+                append("images: ").append(snap.images.joinToString { "\"${it.description}\" ${it.bounds.toShortString()}" }).append('\n')
+                append("page fetch: ").append(imageResult?.debug ?: "not finished").append('\n')
+                append("--- browser UI nodes ---\n").append(snap.debug)
+            }
+        }
+        val cm = getSystemService(ClipboardManager::class.java)
+        cm.setPrimaryClip(ClipData.newPlainText("Ax Claude debug", info))
+        Toast.makeText(this, "Debug info copied", Toast.LENGTH_SHORT).show()
     }
 
     private fun isServiceEnabled(): Boolean = MainActivity.isServiceEnabled(this)

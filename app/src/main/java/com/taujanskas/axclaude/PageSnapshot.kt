@@ -12,8 +12,11 @@ data class VisibleImage(
 data class PageSnapshot(
     val packageName: String,
     val url: String?,
+    val urlSource: String,
     val images: List<VisibleImage>,
-    val takenAt: Long
+    val takenAt: Long,
+    /** Short dump of the browser's own UI nodes, for troubleshooting. */
+    val debug: String
 )
 
 /** Shared between the accessibility service and the Ax Claude popup (same process). */
