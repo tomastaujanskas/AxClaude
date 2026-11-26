@@ -2,6 +2,8 @@ package com.taujanskas.axclaude
 
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent
+import android.graphics.Bitmap
+import android.view.Display
 import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
@@ -41,6 +43,7 @@ class ScreenReaderService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         bubble = SelectionBubble(this) { onBubbleTapped() }
+        Screenshots.cleanup(this)
     }
 
     override fun onDestroy() {
@@ -81,6 +84,44 @@ class ScreenReaderService : AccessibilityService() {
             }
         } catch (e: Exception) {
         }
+    }
+
+    // ---------------- Screenshot ----------------
+
+    /** Takes a screenshot into the private cache; calls [done] on the main thread (null on failure). */
+    private fun takeTempScreenshot(done: (java.io.File?) -> Unit) {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.R) {
+            done(null); return
+        }
+        try {
+            takeScreenshot(Display.DEFAULT_DISPLAY, mainExecutor,
+                object : AccessibilityService.TakeScreenshotCallback {
+                    override fun onSuccess(result: AccessibilityService.ScreenshotResult) {
+                        Thread {
+                            var file: java.io.File? = null
+                            try {
+                                val hw = Bitmap.wrapHardwareBuffer(result.hardwareBuffer, result.colorSpace)
+                                val bmp = hw?.copy(Bitmap.Config.ARGB_8888, false)
+                                result.hardwareBuffer.close()
+                                if (bmp != null) {
+                                    file = Screenshots.save(this@ScreenReaderService, bmp)
+                                    bmp.recycle()
+                                }
+                            } catch (e: Exception) {
+                            }
+                            handler.post { done(file) }
+                        }.start()
+                    }
+
+                    override fun onFailure(errorCode: Int) {
+                        done(null)
+                    }
+                })
+        } catch (e: Exception) {
+            done(null)
+        }
+        // Safety net: remove old screenshots later even if the popup is never opened again.
+        handler.postDelayed({ Screenshots.cleanup(this) }, Screenshots.KEEP_MS + 5_000)
     }
 
     // ---------------- Bubble ----------------
@@ -157,14 +198,18 @@ class ScreenReaderService : AccessibilityService() {
         }
         copyNode = null
 
+        // Let the menu and bubble disappear, then take the screenshot, then open the popup.
         handler.postDelayed({
-            val intent = Intent(this, AxClaudeActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                if (fromEvent.isNotEmpty()) putExtra(Intent.EXTRA_PROCESS_TEXT, fromEvent)
-                putExtra(AxClaudeActivity.EXTRA_READ_CLIPBOARD, copied)
+            takeTempScreenshot { file ->
+                val intent = Intent(this, AxClaudeActivity::class.java).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    if (fromEvent.isNotEmpty()) putExtra(Intent.EXTRA_PROCESS_TEXT, fromEvent)
+                    putExtra(AxClaudeActivity.EXTRA_READ_CLIPBOARD, copied)
+                    if (file != null) putExtra(AxClaudeActivity.EXTRA_SCREENSHOT, file.absolutePath)
+                }
+                startActivity(intent)
             }
-            startActivity(intent)
-        }, if (copied) 250L else 0L)
+        }, 350L)
     }
 
     private data class Item(val node: AccessibilityNodeInfo, val inWeb: Boolean)

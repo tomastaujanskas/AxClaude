@@ -46,6 +46,31 @@
             android:maxLines="4"
             android:textSize="13sp" />
 
+        <LinearLayout
+            android:id="@+id/shotRow"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:visibility="gone">
+
+            <ImageView
+                android:id="@+id/shotPreview"
+                android:layout_width="64dp"
+                android:layout_height="96dp"
+                android:contentDescription="Screenshot preview"
+                android:scaleType="centerCrop" />
+
+            <CheckBox
+                android:id="@+id/includeShot"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:checked="true"
+                android:text="Include screenshot" />
+        </LinearLayout>
+
         <EditText
             android:id="@+id/question"
             android:layout_width="match_parent"

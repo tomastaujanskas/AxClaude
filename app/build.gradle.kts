@@ -11,8 +11,8 @@ android {
         applicationId = "com.taujanskas.axclaude"
         minSdk = 29
         targetSdk = 35
-        versionCode = 3
-        versionName = "1.2"
+        versionCode = 4
+        versionName = "1.3"
     }
 
     // One fixed key so every build can install over the previous one.
@@ -42,4 +42,5 @@ android {
 
 dependencies {
     implementation("org.jsoup:jsoup:1.18.3")
+    implementation("androidx.core:core:1.13.1")
 }
