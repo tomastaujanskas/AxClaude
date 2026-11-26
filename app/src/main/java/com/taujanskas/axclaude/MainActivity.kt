@@ -10,6 +10,7 @@ import android.provider.Settings
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.Switch
 import android.widget.TextView
 
 /** Setup screen: explains how to use Ax Claude and turns on the page reader. */
@@ -38,6 +39,15 @@ class MainActivity : Activity() {
         }
         layout.addView(status)
 
+        val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+        layout.addView(Switch(this).apply {
+            text = "Show ✳ Ax Claude bubble when I select text"
+            textSize = 16f
+            isChecked = prefs.getBoolean(PREF_BUBBLE, true)
+            setPadding(0, pad / 2, 0, pad / 2)
+            setOnCheckedChangeListener { _, on -> prefs.edit().putBoolean(PREF_BUBBLE, on).apply() }
+        })
+
         layout.addView(Button(this).apply {
             text = "Open accessibility settings"
             setOnClickListener { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
@@ -58,7 +68,8 @@ class MainActivity : Activity() {
             text = """
                 How to use
                 1. In Firefox, select some text.
-                2. Tap "Ax Claude" in the menu that pops up (if you can't see it, tap ⋮ in that menu).
+                2. Tap the orange ✳ Ax Claude bubble that appears next to the Copy / Share menu.
+                   (Ax Claude is also at the end of that menu, under ⋮.)
                 3. Optionally type a question, then tap Send to Claude.
 
                 Turning on the page reader (needed for the web address and images)
@@ -66,7 +77,7 @@ class MainActivity : Activity() {
                 2. If Android says the setting is restricted (normal for apps installed from a file):
                    tap "Open app info", then ⋮ (top right) → "Allow restricted settings", and try step 1 again.
 
-                The page reader only watches Firefox, Chrome and Samsung Internet, keeps nothing on the phone,
+                The page reader only reads Firefox, Chrome and Samsung Internet, keeps nothing on the phone,
                 and sends nothing anywhere until you tap Send to Claude.
             """.trimIndent()
         })
@@ -83,6 +94,9 @@ class MainActivity : Activity() {
     }
 
     companion object {
+        const val PREFS = "axclaude"
+        const val PREF_BUBBLE = "bubble_enabled"
+
         fun isServiceEnabled(context: Context): Boolean {
             val expected = ComponentName(context, ScreenReaderService::class.java).flattenToString()
             val enabled = Settings.Secure.getString(

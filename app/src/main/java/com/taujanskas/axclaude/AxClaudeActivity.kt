@@ -24,6 +24,8 @@ class AxClaudeActivity : Activity() {
     @Volatile private var imagesDone = false
 
     private lateinit var imagesText: TextView
+    private lateinit var selectedView: TextView
+    private var readClipboardPending = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -32,12 +34,14 @@ class AxClaudeActivity : Activity() {
         selected = intent.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT)?.toString()?.trim().orEmpty()
         snapshot = SnapshotStore.fresh()
 
-        val selectedText = findViewById<TextView>(R.id.selectedText)
+        selectedView = findViewById(R.id.selectedText)
         val pageText = findViewById<TextView>(R.id.pageText)
         imagesText = findViewById(R.id.imagesText)
         val question = findViewById<EditText>(R.id.question)
 
-        selectedText.text = if (selected.isNotEmpty()) "“$selected”" else "(No text selected)"
+        // Opened from the bubble: the selection was copied, read it once we have focus.
+        readClipboardPending = intent.getBooleanExtra(EXTRA_READ_CLIPBOARD, false)
+        showSelected()
 
         val url = snapshot?.url
         if (url != null) {
@@ -60,6 +64,28 @@ class AxClaudeActivity : Activity() {
         findViewById<Button>(R.id.cancel).setOnClickListener { finish() }
         findViewById<Button>(R.id.send).setOnClickListener {
             sendToClaude(question.text?.toString()?.trim().orEmpty())
+        }
+    }
+
+    private fun showSelected() {
+        selectedView.text = when {
+            selected.isNotEmpty() -> "“$selected”"
+            readClipboardPending -> "(Reading selected text…)"
+            else -> "(No text selected)"
+        }
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        // Android only lets the focused app read the clipboard.
+        if (hasFocus && readClipboardPending) {
+            readClipboardPending = false
+            val cm = getSystemService(ClipboardManager::class.java)
+            val clip = cm.primaryClip
+            val text = if (clip != null && clip.itemCount > 0)
+                clip.getItemAt(0).coerceToText(this)?.toString()?.trim().orEmpty() else ""
+            if (text.isNotEmpty()) selected = text
+            showSelected()
         }
     }
 
@@ -166,5 +192,6 @@ class AxClaudeActivity : Activity() {
 
     companion object {
         const val CLAUDE_PACKAGE = "com.anthropic.claude"
+        const val EXTRA_READ_CLIPBOARD = "com.taujanskas.axclaude.READ_CLIPBOARD"
     }
 }

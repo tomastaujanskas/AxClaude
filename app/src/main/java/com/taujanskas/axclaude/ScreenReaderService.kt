@@ -1,16 +1,20 @@
 package com.taujanskas.axclaude
 
 import android.accessibilityservice.AccessibilityService
+import android.content.Intent
 import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 
 /**
- * Watches the supported browsers (listed in res/xml/accessibility_config.xml) and keeps a
- * snapshot of the current address and the images visible on screen. Nothing is stored on
- * disk or sent anywhere; the Ax Claude popup reads the snapshot when you tap Ax Claude.
+ * Watches the supported browsers and:
+ *  - keeps a snapshot of the current address and the images visible on screen;
+ *  - shows the "✳ Ax Claude" bubble beside the browser's text-selection menu.
+ * Nothing is stored on disk or sent anywhere; the Ax Claude popup reads the snapshot
+ * when you open it.
  */
 class ScreenReaderService : AccessibilityService() {
 
@@ -19,34 +23,161 @@ class ScreenReaderService : AccessibilityService() {
     private val captureRunnable = Runnable {
         pending = false
         try {
-            captureNow()
+            val browserActive = captureNow()
+            updateBubble(browserActive)
         } catch (e: Exception) {
             // Never let a bad node tree crash the service.
         }
     }
 
+    private lateinit var bubble: SelectionBubble
+    /** The selection menu's "Copy" item, clicked when the bubble is tapped. */
+    private var copyNode: AccessibilityNodeInfo? = null
+    /** Selected text reported by the browser itself, if it reports it. */
+    private var eventSelection: String? = null
+    private var eventSelectionAt = 0L
+    private val autoHide = Runnable { bubble.hide() }
+
+    override fun onServiceConnected() {
+        super.onServiceConnected()
+        bubble = SelectionBubble(this) { onBubbleTapped() }
+    }
+
+    override fun onDestroy() {
+        if (::bubble.isInitialized) bubble.hide()
+        super.onDestroy()
+    }
+
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        val pkg = event?.packageName?.toString() ?: return
+        event ?: return
+        val pkg = event.packageName?.toString()
         if (pkg == packageName) return
+        val type = event.eventType
+        val windowEvent = type == AccessibilityEvent.TYPE_WINDOWS_CHANGED ||
+            type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+        if (pkg !in BROWSERS && !windowEvent) return
+
+        if (type == AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED && pkg in BROWSERS) {
+            rememberSelection(event)
+        }
+
         // Coalesce bursts of events into one capture.
         if (!pending) {
             pending = true
-            handler.postDelayed(captureRunnable, 300)
+            handler.postDelayed(captureRunnable, 250)
         }
     }
 
     override fun onInterrupt() {}
 
+    private fun rememberSelection(event: AccessibilityEvent) {
+        try {
+            val from = event.fromIndex
+            val to = event.toIndex
+            val full = event.text.joinToString("").ifEmpty { event.source?.text?.toString().orEmpty() }
+            if (from >= 0 && to > from && to <= full.length) {
+                eventSelection = full.substring(from, to).trim()
+                eventSelectionAt = System.currentTimeMillis()
+            }
+        } catch (e: Exception) {
+        }
+    }
+
+    // ---------------- Bubble ----------------
+
+    private fun bubbleEnabled(): Boolean =
+        getSharedPreferences(MainActivity.PREFS, MODE_PRIVATE)
+            .getBoolean(MainActivity.PREF_BUBBLE, true)
+
+    private fun updateBubble(browserActive: Boolean) {
+        if (!::bubble.isInitialized) return
+        if (!browserActive || !bubbleEnabled()) {
+            bubble.hide(); copyNode = null; return
+        }
+        val menu = findSelectionMenu()
+        if (menu == null) {
+            bubble.hide(); copyNode = null; return
+        }
+        copyNode = menu.second
+        bubble.showNear(menu.first)
+        handler.removeCallbacks(autoHide)
+        handler.postDelayed(autoHide, 30_000)
+    }
+
+    /** Finds the browser's floating text-selection menu: its bounds and its Copy item. */
+    private fun findSelectionMenu(): Pair<Rect, AccessibilityNodeInfo>? {
+        val wins: List<AccessibilityWindowInfo> = try { windows } catch (e: Exception) { emptyList() }
+        for (w in wins) {
+            val root = w.root ?: continue
+            if (root.packageName?.toString() !in BROWSERS) continue
+            val stack = ArrayDeque<AccessibilityNodeInfo>()
+            stack.addLast(root)
+            var visited = 0
+            while (stack.isNotEmpty() && visited < 3000) {
+                val n = stack.removeLast()
+                visited++
+                val label = (n.text ?: n.contentDescription)?.toString()?.trim().orEmpty()
+                if (label.equals("Copy", ignoreCase = true)) {
+                    val parent = n.parent
+                    if (parent != null && hasMenuSibling(parent)) {
+                        val r = Rect()
+                        parent.getBoundsInScreen(r)
+                        // Floating menus are short and wide; skip anything page-sized.
+                        if (r.height() < (120 * resources.displayMetrics.density)) return r to n
+                    }
+                }
+                for (i in 0 until n.childCount) n.getChild(i)?.let { stack.addLast(it) }
+            }
+        }
+        return null
+    }
+
+    private fun hasMenuSibling(parent: AccessibilityNodeInfo): Boolean {
+        val others = setOf("select all", "share", "search", "paste", "cut")
+        for (i in 0 until parent.childCount) {
+            val c = parent.getChild(i) ?: continue
+            val label = (c.text ?: c.contentDescription)?.toString()?.trim()?.lowercase().orEmpty()
+            if (label in others) return true
+        }
+        return false
+    }
+
+    private fun onBubbleTapped() {
+        bubble.hide()
+        handler.removeCallbacks(autoHide)
+
+        val fromEvent = eventSelection
+            ?.takeIf { System.currentTimeMillis() - eventSelectionAt < 60_000 }
+            .orEmpty()
+        // Click the browser's own Copy so the exact selection lands on the clipboard.
+        val copied = try {
+            copyNode?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
+        } catch (e: Exception) {
+            false
+        }
+        copyNode = null
+
+        handler.postDelayed({
+            val intent = Intent(this, AxClaudeActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                if (fromEvent.isNotEmpty()) putExtra(Intent.EXTRA_PROCESS_TEXT, fromEvent)
+                putExtra(AxClaudeActivity.EXTRA_READ_CLIPBOARD, copied)
+            }
+            startActivity(intent)
+        }, if (copied) 250L else 0L)
+    }
+
     private data class Item(val node: AccessibilityNodeInfo, val inWeb: Boolean)
 
-    private fun captureNow() {
-        val root = rootInActiveWindow ?: return
-        val pkg = root.packageName?.toString() ?: return
-        if (pkg == packageName) return
+    /** Updates the snapshot. Returns true if a supported browser is in front. */
+    private fun captureNow(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val pkg = root.packageName?.toString() ?: return false
+        if (pkg == packageName || pkg !in BROWSERS) return false
 
         val screen = Rect()
         root.getBoundsInScreen(screen)
-        if (screen.isEmpty) return
+        if (screen.isEmpty) return true
 
         val density = resources.displayMetrics.density
         val minImagePx = (64 * density).toInt()
@@ -144,9 +275,15 @@ class ScreenReaderService : AccessibilityService() {
             takenAt = System.currentTimeMillis(),
             debug = "pkg=$pkg visited=$visited web=$sawWebContent screen=$screen\n$debug"
         )
+        return true
     }
 
     companion object {
+        val BROWSERS = setOf(
+            "org.mozilla.firefox", "org.mozilla.firefox_beta", "org.mozilla.fenix",
+            "com.android.chrome", "com.sec.android.app.sbrowser"
+        )
+
         private val URL_FIND = Regex(
             "(https?://)?(?:[a-z0-9-]+\\.)+[a-z]{2,}(?::\\d+)?(?:/[^\\s\"'<>]*)?",
             RegexOption.IGNORE_CASE

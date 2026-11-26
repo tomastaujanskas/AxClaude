@@ -3,5 +3,5 @@
     <string name="app_name">Ax Claude</string>
     <string name="process_text_label">Ax Claude</string>
     <string name="service_label">Ax Claude page reader</string>
-    <string name="service_description">Lets Ax Claude read the web address and find the images shown on screen in Firefox, Chrome and Samsung Internet when you tap Ax Claude on selected text. Nothing is stored or sent anywhere except to Claude when you tap Send.</string>
+    <string name="service_description">Lets Ax Claude show its bubble when you select text, and read the web address and on-screen images in Firefox, Chrome and Samsung Internet. Nothing is stored or sent anywhere except to Claude when you tap Send.</string>
 </resources>
